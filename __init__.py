@@ -1,31 +1,25 @@
-from flask import Flask, jsonify, request, render_template, redirect, url_for, make_response
+from flask import Flask, jsonify, request, render_template
 from flask_jwt_extended import (
     create_access_token,
     get_jwt_identity,
     jwt_required,
     JWTManager,
     verify_jwt_in_request,
-    get_jwt,
-    set_access_cookies,
-    unset_jwt_cookies
+    get_jwt
 )
 from functools import wraps
-from datetime import timedelta
 
 app = Flask(__name__)
 
 # Configuration JWT
 app.config["JWT_SECRET_KEY"] = "Ma_clé_secrete"
-app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(hours=1)  # 1 heure
-app.config["JWT_TOKEN_LOCATION"] = ["cookies"]  # Stockage dans les cookies
-app.config["JWT_COOKIE_SECURE"] = False  # À mettre en True en production (HTTPS)
-app.config["JWT_COOKIE_CSRF_PROTECT"] = False  # Simplification pour l'exercice
+app.config["JWT_ACCESS_TOKEN_EXPIRES"] = 3600  # 1 heure
 jwt = JWTManager(app)
 
 # Mock utilisateurs avec rôles
 users = {
     "test": {"password": "test", "role": "user"},
-    "admin": {"password": "admin", "role": "admin"}
+    "admin": {"password": "admin", "role": "admin"}  # Nouvel utilisateur admin
 }
 
 # Décorateur pour vérifier le rôle admin
@@ -33,69 +27,48 @@ def admin_required():
     def wrapper(fn):
         @wraps(fn)
         def decorator(*args, **kwargs):
-            verify_jwt_in_request()
-            claims = get_jwt()
+            verify_jwt_in_request()  # Vérifie le JWT
+            claims = get_jwt()      # Récupère les claims
             if claims.get("role") != "admin":
-                return render_template("error.html", message="Accès admin requis"), 403
+                return jsonify({"msg": "Accès refusé : Admin requis"}), 403
             return fn(*args, **kwargs)
         return decorator
     return wrapper
 
-# Routes principales
 @app.route('/')
-def home():
-    return render_template('formulaire.html')
+def hello_world():
+    return render_template('accueil.html')
 
-@app.route('/formulaire.html')
-def formulaire():
-    return render_template('formulaire.html')
-
-# Gestion du login via formulaire HTML
+# Route de login (avec gestion des rôles)
 @app.route("/login", methods=["POST"])
 def login():
-    username = request.form.get("username")
-    password = request.form.get("password")
+    username = request.json.get("username", None)
+    password = request.json.get("password", None)
     
     user = users.get(username)
     if not user or user["password"] != password:
-        return render_template("error.html", message="Identifiants invalides"), 401
+        return jsonify({"msg": "Mauvais utilisateur ou mot de passe"}), 401
 
-    # Création du token avec rôle
+    # Crée le token avec le rôle dans les claims
     access_token = create_access_token(
         identity=username,
         additional_claims={"role": user["role"]}
     )
-    
-    # Réponse avec cookie JWT
-    resp = make_response(redirect(url_for("protected_page")))
-    set_access_cookies(resp, access_token)
-    return resp
+    return jsonify(access_token=access_token)
 
-# Route protégée avec JWT dans les cookies
-@app.route("/protected")
+# Route protégée standard
+@app.route("/protected", methods=["GET"])
 @jwt_required()
-def protected_page():
+def protected():
     current_user = get_jwt_identity()
-    claims = get_jwt()
-    return render_template(
-        "protected.html",
-        username=current_user,
-        role=claims.get("role")
-    )
+    return jsonify(logged_in_as=current_user), 200
 
-# Route admin protégée
-@app.route("/admin")
+# Nouvelle route admin (protégée par rôle)
+@app.route("/admin", methods=["GET"])
 @admin_required()
 def admin_dashboard():
     current_user = get_jwt_identity()
-    return render_template("admin.html", username=current_user)
-
-# Déconnexion (supprime les cookies)
-@app.route("/logout")
-def logout():
-    resp = make_response(redirect(url_for("home")))
-    unset_jwt_cookies(resp)
-    return resp
+    return jsonify(msg=f"Bienvenue dans l'interface admin, {current_user} !"), 200
 
 if __name__ == "__main__":
     app.run(debug=True)
